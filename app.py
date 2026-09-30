@@ -15,15 +15,30 @@ from github_client import get_issues
 
 load_dotenv()
 
-groq = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if not GROQ_API_KEY:
+    st.error("GROQ_API_KEY is missing. Please add it to your .env file.")
+    st.stop()
+
+groq = Groq(api_key=GROQ_API_KEY)
 
 st.set_page_config(
     page_title="ProductHindsight",
     page_icon="🧠",
     layout="wide"
 )
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+
+if "demo_memory" not in st.session_state:
+    st.session_state["demo_memory"] = ""
+
+if "demo_question" not in st.session_state:
+    st.session_state["demo_question"] = ""
 
 
 # =========================================================
@@ -64,15 +79,10 @@ st.markdown(
             rgba(255,255,255,0.07),
             rgba(255,255,255,0.025)
         );
-
         padding: 22px;
         border-radius: 18px;
-
-        border: 1px solid
-        rgba(255,255,255,0.09);
-
-        box-shadow:
-        0 8px 30px rgba(0,0,0,0.15);
+        border: 1px solid rgba(255,255,255,0.09);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
     }
 
     [data-testid="stMetricLabel"] {
@@ -95,24 +105,19 @@ st.markdown(
     }
 
     section[data-testid="stSidebar"] {
-        border-right: 1px solid
-        rgba(255,255,255,0.08);
+        border-right: 1px solid rgba(255,255,255,0.08);
     }
 
     .hero-card {
         padding: 28px;
         border-radius: 20px;
-
         background:
         linear-gradient(
             135deg,
             rgba(92,124,250,0.16),
             rgba(255,255,255,0.035)
         );
-
-        border: 1px solid
-        rgba(255,255,255,0.09);
-
+        border: 1px solid rgba(255,255,255,0.09);
         margin-bottom: 25px;
     }
 
@@ -131,13 +136,8 @@ st.markdown(
     .memory-card {
         padding: 22px;
         border-radius: 18px;
-
-        background:
-        rgba(255,255,255,0.045);
-
-        border: 1px solid
-        rgba(255,255,255,0.08);
-
+        background: rgba(255,255,255,0.045);
+        border: 1px solid rgba(255,255,255,0.08);
         min-height: 130px;
     }
 
@@ -152,10 +152,111 @@ st.markdown(
         line-height: 1.5;
     }
 
+    .learning-box {
+        padding: 25px;
+        border-radius: 18px;
+        background: rgba(92,124,250,0.10);
+        border: 1px solid rgba(92,124,250,0.25);
+        line-height: 1.7;
+    }
+
     </style>
     """,
     unsafe_allow_html=True
 )
+
+
+# =========================================================
+# HELPER FUNCTIONS
+# =========================================================
+
+def get_github_issues():
+    """Safely retrieve GitHub issues."""
+    try:
+        issues = get_issues()
+
+        if issues is None:
+            return []
+
+        return issues
+
+    except Exception as e:
+        st.error(f"GitHub connection error: {e}")
+        return []
+
+
+def recall_memory(query):
+    """Safely retrieve information from Hindsight."""
+    try:
+        return client.recall(
+            bank_id="product-hindsight",
+            query=query
+        )
+
+    except Exception as e:
+        st.error(f"Hindsight error: {e}")
+        return None
+
+
+def save_memory(content):
+    """Safely save information to Hindsight."""
+    try:
+        client.retain(
+            bank_id="product-hindsight",
+            content=content
+        )
+        return True
+
+    except Exception as e:
+        st.error(f"Could not save memory: {e}")
+        return False
+
+
+def ask_groq(question, memory):
+    """Send remembered evidence to Groq."""
+    prompt = f"""
+You are ProductHindsight, an AI product investigator.
+
+Use ONLY the Hindsight memories provided below.
+
+USER QUESTION:
+{question}
+
+HINDSIGHT MEMORIES:
+{memory}
+
+Provide:
+
+1. Main findings
+2. Repeated problems
+3. Evidence from the memories
+4. Possible patterns
+5. What should be investigated next
+
+Important rules:
+
+- Do not invent facts.
+- Only use information present in the memories.
+- Clearly distinguish evidence from interpretation.
+- Do not claim causation unless the evidence clearly supports it.
+"""
+
+    try:
+        response = groq.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        st.error(f"Groq error: {e}")
+        return None
 
 
 # =========================================================
@@ -226,46 +327,29 @@ if page == "Overview":
         unsafe_allow_html=True
     )
 
-    try:
-
-        issues = get_issues()
-
-        if issues is None:
-            issues = []
-
-    except Exception as e:
-
-        issues = []
-
-        st.error(
-            f"GitHub connection error: {e}"
-        )
+    issues = get_github_issues()
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-
         st.metric(
             "🐙 GitHub Issues",
             len(issues)
         )
 
     with col2:
-
         st.metric(
             "🧠 Memory",
             "ACTIVE"
         )
 
     with col3:
-
         st.metric(
             "🤖 AI Investigator",
             "ONLINE"
         )
 
     with col4:
-
         st.metric(
             "🔄 Learning",
             "ENABLED"
@@ -273,14 +357,11 @@ if page == "Overview":
 
     st.divider()
 
-    st.subheader(
-        "💡 Why ProductHindsight?"
-    )
+    st.subheader("💡 Why ProductHindsight?")
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
-
         st.markdown(
             """
             <div class="memory-card">
@@ -300,7 +381,6 @@ if page == "Overview":
         )
 
     with c2:
-
         st.markdown(
             """
             <div class="memory-card">
@@ -320,7 +400,6 @@ if page == "Overview":
         )
 
     with c3:
-
         st.markdown(
             """
             <div class="memory-card">
@@ -341,9 +420,7 @@ if page == "Overview":
 
     st.divider()
 
-    st.subheader(
-        "🔄 Product Intelligence Pipeline"
-    )
+    st.subheader("🔄 Product Intelligence Pipeline")
 
     pipeline = pd.DataFrame(
         {
@@ -354,7 +431,6 @@ if page == "Overview":
                 "💾 Memory",
                 "🔄 Future Query"
             ],
-
             "What happens": [
                 "Collect real product feedback",
                 "Store persistent product knowledge",
@@ -362,7 +438,6 @@ if page == "Overview":
                 "Remember investigation outcomes",
                 "Use history for future investigations"
             ],
-
             "Status": [
                 "CONNECTED",
                 "ACTIVE",
@@ -381,9 +456,7 @@ if page == "Overview":
 
     st.divider()
 
-    st.subheader(
-        "🐙 Recent Hyperswitch Issues"
-    )
+    st.subheader("🐙 Recent Hyperswitch Issues")
 
     if issues:
 
@@ -395,7 +468,7 @@ if page == "Overview":
                 {
                     "Issue": issue.get(
                         "number",
-                        "N/A"
+                        issue.get("id", "N/A")
                     ),
 
                     "Title": issue.get(
@@ -415,9 +488,7 @@ if page == "Overview":
                 }
             )
 
-        issue_df = pd.DataFrame(
-            issue_data
-        )
+        issue_df = pd.DataFrame(issue_data)
 
         st.dataframe(
             issue_df,
@@ -438,9 +509,7 @@ if page == "Overview":
 
 elif page == "Hindsight Memory":
 
-    st.title(
-        "🧠 Hindsight Memory"
-    )
+    st.title("🧠 Hindsight Memory")
 
     st.markdown(
         """
@@ -458,38 +527,27 @@ elif page == "Hindsight Memory":
         "What problems have developers reported before?"
     )
 
-    if st.button(
-        "🔍 Recall Memory"
-    ):
+    if st.button("🔍 Recall Memory"):
 
-        with st.spinner(
-            "Searching Hindsight memory..."
-        ):
+        if not query.strip():
+            st.warning("Please enter a question.")
+        else:
 
-            try:
+            with st.spinner(
+                "Searching Hindsight memory..."
+            ):
 
-                memory = client.recall(
-                    bank_id="product-hindsight",
-                    query=query
-                )
+                memory = recall_memory(query)
 
-                st.success(
-                    "Memory retrieved!"
-                )
+            if memory is not None:
+
+                st.success("Memory retrieved!")
 
                 st.markdown(
                     "### 📚 Retrieved Product Knowledge"
                 )
 
-                st.write(
-                    memory
-                )
-
-            except Exception as e:
-
-                st.error(
-                    f"Hindsight error: {e}"
-                )
+                st.write(memory)
 
 
 # =========================================================
@@ -498,9 +556,7 @@ elif page == "Hindsight Memory":
 
 elif page == "AI Investigator":
 
-    st.title(
-        "🔍 AI Product Investigator"
-    )
+    st.title("🔍 AI Product Investigator")
 
     st.markdown(
         """
@@ -518,93 +574,34 @@ elif page == "AI Investigator":
         "What problems are developers struggling with?"
     )
 
-    if st.button(
-        "🚀 Investigate"
-    ):
+    if st.button("🚀 Investigate"):
+
+        if not question.strip():
+            st.warning("Please enter a question.")
+            st.stop()
 
         with st.spinner(
             "Searching product history..."
         ):
 
-            try:
+            memory = recall_memory(question)
 
-                memory = client.recall(
-                    bank_id="product-hindsight",
-                    query=question
-                )
-
-            except Exception as e:
-
-                st.error(
-                    f"Hindsight error: {e}"
-                )
-
-                st.stop()
+        if memory is None:
+            st.stop()
 
         with st.spinner(
             "AI is analyzing remembered evidence..."
         ):
 
-            prompt = f"""
-You are ProductHindsight,
-an AI product investigator.
+            investigation_text = ask_groq(
+                question,
+                memory
+            )
 
-Use ONLY the Hindsight memories below.
+        if investigation_text is None:
+            st.stop()
 
-USER QUESTION:
-
-{question}
-
-HINDSIGHT MEMORIES:
-
-{memory}
-
-Provide:
-
-1. Main findings
-2. Repeated problems
-3. Evidence from the memories
-4. Possible patterns
-5. What should be investigated next
-
-Important rules:
-
-- Do not invent facts.
-- Only use information present in the memories.
-- Clearly distinguish evidence from interpretation.
-- Do not claim causation unless the evidence clearly supports it.
-"""
-
-            try:
-
-                response = groq.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
-                )
-
-            except Exception as e:
-
-                st.error(
-                    f"Groq error: {e}"
-                )
-
-                st.stop()
-
-        investigation_text = (
-            response
-            .choices[0]
-            .message
-            .content
-        )
-
-        st.success(
-            "Investigation complete!"
-        )
+        st.success("Investigation complete!")
 
         st.markdown(
             "### 🧠 Investigation Result"
@@ -614,11 +611,8 @@ Important rules:
             investigation_text
         )
 
-        try:
-
-            client.retain(
-                bank_id="product-hindsight",
-                content=f"""
+        saved = save_memory(
+            f"""
 ProductHindsight Investigation
 
 Question:
@@ -630,16 +624,11 @@ Findings:
 This investigation was saved as product knowledge
 for future investigations.
 """
-            )
+        )
 
+        if saved:
             st.success(
                 "💾 Investigation saved to Hindsight memory!"
-            )
-
-        except Exception as e:
-
-            st.warning(
-                f"Investigation completed, but memory saving failed: {e}"
             )
 
 
@@ -649,9 +638,7 @@ for future investigations.
 
 elif page == "Memory Evolution":
 
-    st.title(
-        "🧠 Memory Evolution"
-    )
+    st.title("🧠 Memory Evolution")
 
     st.markdown(
         """
@@ -662,29 +649,28 @@ elif page == "Memory Evolution":
 
     st.divider()
 
-    st.subheader(
-        "1️⃣ What did we learn before?"
-    )
+    st.subheader("1️⃣ What did we learn before?")
 
     old_question = st.text_input(
         "Previous investigation",
         "What problems have developers reported in Hyperswitch?"
     )
 
-    if st.button(
-        "🔎 Recall Previous Learning"
-    ):
+    if st.button("🔎 Recall Previous Learning"):
 
-        with st.spinner(
-            "Searching Hindsight..."
-        ):
+        if not old_question.strip():
+            st.warning("Please enter a question.")
+        else:
 
-            try:
+            with st.spinner(
+                "Searching Hindsight..."
+            ):
 
-                old_memory = client.recall(
-                    bank_id="product-hindsight",
-                    query=old_question
+                old_memory = recall_memory(
+                    old_question
                 )
+
+            if old_memory is not None:
 
                 st.success(
                     "Previous knowledge recalled!"
@@ -694,49 +680,37 @@ elif page == "Memory Evolution":
                     "### 📚 Previous Knowledge"
                 )
 
-                st.write(
-                    old_memory
-                )
-
-            except Exception as e:
-
-                st.error(
-                    f"Hindsight error: {e}"
-                )
+                st.write(old_memory)
 
     st.divider()
 
-    st.subheader(
-        "2️⃣ Ask a new question"
-    )
+    st.subheader("2️⃣ Ask a new question")
 
     new_question = st.text_input(
         "New investigation",
         "Have we seen similar developer problems before?"
     )
 
-    if st.button(
-        "🔄 Compare With Memory"
-    ):
+    if st.button("🔄 Compare With Memory"):
+
+        if not new_question.strip():
+            st.warning("Please enter a question.")
+            st.stop()
 
         with st.spinner(
             "Comparing with product history..."
         ):
 
-            try:
+            memory = recall_memory(
+                new_question
+            )
 
-                memory = client.recall(
-                    bank_id="product-hindsight",
-                    query=new_question
-                )
+        if memory is None:
+            st.stop()
 
-            except Exception as e:
-
-                st.error(
-                    f"Hindsight error: {e}"
-                )
-
-                st.stop()
+        with st.spinner(
+            "AI is comparing remembered evidence..."
+        ):
 
             prompt = f"""
 You are ProductHindsight.
@@ -764,6 +738,7 @@ Important:
 
 - Do not invent facts.
 - Do not claim causation without evidence.
+- Clearly separate evidence from interpretation.
 """
 
             try:
@@ -776,6 +751,13 @@ Important:
                             "content": prompt
                         }
                     ]
+                )
+
+                comparison = (
+                    response
+                    .choices[0]
+                    .message
+                    .content
                 )
 
             except Exception as e:
@@ -794,12 +776,7 @@ Important:
             "### 🔄 Comparison Result"
         )
 
-        st.markdown(
-            response
-            .choices[0]
-            .message
-            .content
-        )
+        st.markdown(comparison)
 
         st.info(
             """
@@ -817,130 +794,97 @@ Important:
 
 elif page == "🧠 Learning Demo":
 
-    st.title(
-        "🧠 ProductHindsight Learning Demo"
-    )
+    st.title("🧠 ProductHindsight Learning Demo")
 
     st.markdown(
         """
         ### Watch the agent learn
 
-        This is the most important demo for showing
-        how persistent memory changes future investigations.
+        This page demonstrates the most important part
+        of ProductHindsight: persistent memory.
         """
     )
 
     st.divider()
 
-    st.subheader(
-        "1️⃣ Observe & Investigate"
-    )
+    st.subheader("1️⃣ Observe & Investigate")
 
     demo_question = st.text_input(
         "Investigation question",
         "What developer problems have appeared in Hyperswitch?"
     )
 
-    if st.button(
-        "🔍 Run Investigation"
-    ):
+    if st.button("🔍 Run Investigation"):
 
-        with st.spinner(
-            "Searching Hindsight memory..."
-        ):
+        if not demo_question.strip():
+            st.warning("Please enter a question.")
+        else:
 
-            try:
+            with st.spinner(
+                "Searching Hindsight memory..."
+            ):
 
-                memory = client.recall(
-                    bank_id="product-hindsight",
-                    query=demo_question
+                memory = recall_memory(
+                    demo_question
                 )
 
-            except Exception as e:
+            if memory is not None:
 
-                st.error(
-                    f"Hindsight error: {e}"
+                st.success(
+                    "Evidence retrieved from Hindsight!"
                 )
 
-                st.stop()
+                st.markdown("### 📚 Evidence")
 
-        st.success(
-            "Evidence retrieved from Hindsight!"
-        )
+                st.write(memory)
 
-        st.markdown(
-            "### 📚 Evidence"
-        )
+                st.session_state["demo_memory"] = str(
+                    memory
+                )
 
-        st.write(
-            memory
-        )
-
-        st.session_state["demo_memory"] = str(
-            memory
-        )
-
-        st.session_state["demo_question"] = (
-            demo_question
-        )
+                st.session_state["demo_question"] = (
+                    demo_question
+                )
 
     st.divider()
 
-    st.subheader(
-        "2️⃣ Remember What We Learned"
-    )
+    st.subheader("2️⃣ Remember What We Learned")
 
-    if st.button(
-        "💾 Remember This Investigation"
-    ):
+    if st.button("💾 Remember This Investigation"):
 
-        investigation_text = (
-            st.session_state.get(
-                "demo_memory",
-                ""
-            )
+        investigation_text = st.session_state.get(
+            "demo_memory",
+            ""
         )
 
-        saved_question = (
-            st.session_state.get(
-                "demo_question",
-                demo_question
-            )
+        saved_question = st.session_state.get(
+            "demo_question",
+            demo_question
         )
 
         if investigation_text:
 
-            try:
-
-                client.retain(
-                    bank_id="product-hindsight",
-                    content=f"""
+            saved = save_memory(
+                f"""
 ProductHindsight Investigation
 
 Question:
-
 {saved_question}
 
 Investigation Evidence:
-
 {investigation_text}
 
 Learning:
-
 ProductHindsight stored this investigation
 so future investigations can compare new
 problems with previous product knowledge.
 """
-                )
+            )
+
+            if saved:
 
                 st.success(
                     "🧠 Investigation saved to Hindsight memory!"
-                )
-
-            except Exception as e:
-
-                st.error(
-                    f"Could not save memory: {e}"
                 )
 
         else:
@@ -951,55 +895,42 @@ problems with previous product knowledge.
 
     st.divider()
 
-    st.subheader(
-        "3️⃣ New Problem → Recall History"
-    )
+    st.subheader("3️⃣ New Problem → Recall History")
 
     future_question = st.text_input(
         "Future investigation",
         "Have we seen this type of developer problem before?"
     )
 
-    if st.button(
-        "🔄 Check Product History"
-    ):
+    if st.button("🔄 Check Product History"):
 
-        with st.spinner(
-            "Checking what ProductHindsight remembers..."
-        ):
+        if not future_question.strip():
+            st.warning("Please enter a question.")
+        else:
 
-            try:
+            with st.spinner(
+                "Checking what ProductHindsight remembers..."
+            ):
 
-                remembered = client.recall(
-                    bank_id="product-hindsight",
-                    query=future_question
+                remembered = recall_memory(
+                    future_question
                 )
 
-            except Exception as e:
+            if remembered is not None:
 
-                st.error(
-                    f"Hindsight error: {e}"
+                st.success(
+                    "Previous product knowledge found!"
                 )
 
-                st.stop()
+                st.markdown(
+                    "### 🧠 What ProductHindsight Remembers"
+                )
 
-        st.success(
-            "Previous product knowledge found!"
-        )
-
-        st.markdown(
-            "### 🧠 What ProductHindsight Remembers"
-        )
-
-        st.write(
-            remembered
-        )
+                st.write(remembered)
 
     st.divider()
 
-    st.subheader(
-        "🔄 The Hindsight Learning Loop"
-    )
+    st.subheader("🔄 The Hindsight Learning Loop")
 
     learning_flow = pd.DataFrame(
         {
@@ -1015,7 +946,7 @@ problems with previous product knowledge.
                 "Collect real GitHub evidence",
                 "AI analyzes the evidence",
                 "Store the investigation in Hindsight",
-                "A future product ququestion appears",
+                "A future product question appears",
                 "Retrieve relevant historical knowledge"
             ]
         }
@@ -1027,14 +958,21 @@ problems with previous product knowledge.
         hide_index=True
     )
 
-    st.success(
+    st.markdown(
         """
-        🎯 **Observe → Investigate → Remember → New Problem → Recall**
+        <div class="learning-box">
+
+        <b>🎯 Observe → Investigate → Remember → New Problem → Recall</b>
+
+        <br><br>
 
         ProductHindsight carries product knowledge forward
         instead of treating every investigation as a completely
         new conversation.
-        """
+
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
 
